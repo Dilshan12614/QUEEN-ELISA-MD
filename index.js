@@ -2,14 +2,14 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, proto } 
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const { File } = require('megajs'); // MEGA ෆයිල් ඩවුන්ලෝඩ් කිරීමට අවශ්‍ය පැකේජය
+const { File } = require('megajs'); 
 const config = require('./config');
 const { commands } = require('./command');
 const { parseMessage } = require('./lib/msgparser'); 
 const { getDB } = require('./lib/database'); 
 
 async function startBot() {
-    // 1. Session and Credentials management (MEGA.nz Downloader Fix)
+    // 1. Session and Credentials management (MEGA.nz # Sign & URL Fix)
     if (!fs.existsSync('./auth_info_baileys')) {
         fs.mkdirSync('./auth_info_baileys');
     }
@@ -24,20 +24,23 @@ async function startBot() {
         try {
             console.log("📥 Downloading session credentials from MEGA.nz...");
             
-            // සෙෂන් අයිඩී එකේ මුලට LUXALGO= හෝ වෙනත් බොට් නමක් ආවොත් එය ඉවත් කර නියම සෙෂන් කේතය පමණක් ගනී
-            const sessdata = config.SESSION_ID.replace("LUXALGO=", "").replace(/^[A-Za-z0-9_]+-MD~/, "");
+            // සෙෂන් අයිඩී එකේ මුලට LUXALGO= ආවොත් එය ඉවත් කරයි
+            let sessdata = config.SESSION_ID.replace("LUXALGO=", "").trim();
             
-            // MEGA.nz ලින්ක් එක සාදා ගැනීම
-            const megaUrl = `https://mega.nz/file/${sessdata}`;
+            // MEGA ලින්ක් එක නිවැරදිව ගොඩනැගීම (ලින්ක් එකේ /file/ කොටස සහ # ලකුණ ස්ථාවරව තබා ගනී)
+            let megaUrl = sessdata;
+            if (!megaUrl.startsWith('https://mega.nz')) {
+                // ඔබ දුන්නේ P5xkUZYL#kmv... වැනි කේතයක් පමණක් නම් එය සම්පූර්ණ MEGA ලින්ක් එකක් බවට පත් කරයි
+                megaUrl = `https://mega.nzfile/${sessdata}`;
+            }
+            
             const file = File.fromURL(megaUrl);
-            
-            // ෆයිල් එක බාගත කර creds.json ලෙස සුරැකීම
             const data = await file.downloadBuffer();
             fs.writeFileSync(credsPath, data);
             console.log("✅ Session downloaded successfully from MEGA and configured! 🔒");
             
         } catch (err) {
-            console.log("❌ MEGA.nz session download failed. Trying backup creation. Error:", err.message);
+            console.log("❌ MEGA.nz session download failed. Error:", err.message);
             fs.writeFileSync(credsPath, JSON.stringify({ "noiseKey": {}, "pairingKey": {}, "me": {}, "myAppStateKeyId": "" })); 
         }
     }
@@ -95,7 +98,6 @@ async function startBot() {
         try {
             if (!mek.messages || mek.messages.length === 0) return;
             
-            // Auto-Read Status Feature
             const rawMsg = mek.messages[0];
             const db = getDB();
             if (db.settings.autoviewstatus && rawMsg.key.remoteJid === 'status@broadcast') {
@@ -103,13 +105,12 @@ async function startBot() {
                 return;
             }
 
-            // Parse incoming WhatsApp raw message payloads via lib/msgparser
             const parsed = await parseMessage(conn, mek);
             if (!parsed) return;
 
             let { msg, jid, isGroup, sender, fromMe, pushname, body, isGroupAdmin, isBotAdmin } = parsed;
 
-            // ================= [ POLL BUTTON READER SYSTEM FIXED ] =================
+            // ================= [ POLL BUTTON READER SYSTEM ] =================
             if (rawMsg.message && rawMsg.message.pollUpdateMessage) {
                 const pollUpdate = rawMsg.message.pollUpdateMessage;
                 if (pollUpdate.vote && pollUpdate.vote.selectedOptions && pollUpdate.vote.selectedOptions.length > 0) {
@@ -120,7 +121,6 @@ async function startBot() {
 
             if (!body) return;
 
-            // Command identification structure
             const dbPrefix = db.settings.prefix || ".";
             const isCmd = body.startsWith(dbPrefix);
             
@@ -139,7 +139,6 @@ async function startBot() {
                 await conn.sendMessage(jid, { text: text }, { quoted: msg });
             };
 
-            // Locate and fire the command or matching button ID from registry
             const cmdData = commands.find((c) => 
                 c.pattern.toLowerCase() === command.toLowerCase() || 
                 c.pattern === command ||
