@@ -23,7 +23,7 @@ async function startBot() {
     if (!conn.authState.creds.registered) {
         // 💡 සටහන: ඔයාගේ බොට් දාන Phone Number එක රටේ කෝඩ් එක සමඟ (+9477xxxxxxx) මෙතන දෙන්නත් පුළුවන්, 
         // නැත්නම් Koyeb Environment Variables වල PHONE_NUMBER ලෙස දෙන්නත් පුළුවන්.
-        const phoneNumber = process.env.PHONE_NUMBER || "94771234567"; // <-- මෙතන ඔයාගේ බොට් දාන නම්බර් එක දාන්න (+ ලකුණ නැතුව)
+        const phoneNumber = process.env.PHONE_NUMBER || "94740534738"; // <-- මෙතන ඔයාගේ බොට් දාන නම්බර් එක දාන්න (+ ලකුණ නැතුව)
         
         setTimeout(async () => {
             let code = await conn.requestPairingCode(phoneNumber);
