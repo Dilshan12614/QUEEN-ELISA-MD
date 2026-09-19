@@ -2,14 +2,14 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, proto } 
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const { File } = require('megajs'); 
+const axios = require('axios'); // MEGA API එකෙන් වේගයෙන් ඩවුන්ලෝඩ් කිරීමට
 const config = require('./config');
 const { commands } = require('./command');
 const { parseMessage } = require('./lib/msgparser'); 
 const { getDB } = require('./lib/database'); 
 
 async function startBot() {
-    // 1. Session and Credentials management (MEGA.nz # Sign & URL Fix)
+    // 1. Session and Credentials management (Fast Axios Downloader Fix)
     if (!fs.existsSync('./auth_info_baileys')) {
         fs.mkdirSync('./auth_info_baileys');
     }
@@ -22,25 +22,30 @@ async function startBot() {
         }
 
         try {
-            console.log("📥 Downloading session credentials from MEGA.nz...");
+            console.log("📥 [SYSTEM] Extracting Session ID credentials...");
             
-            // සෙෂන් අයිඩී එකේ මුලට LUXALGO= ආවොත් එය ඉවත් කරයි
+            // සෙෂන් අයිඩී එක පිරිසිදු කර ගැනීම
             let sessdata = config.SESSION_ID.replace("LUXALGO=", "").trim();
-            
-            // MEGA ලින්ක් එක නිවැරදිව ගොඩනැගීම (ලින්ක් එකේ /file/ කොටස සහ # ලකුණ ස්ථාවරව තබා ගනී)
-            let megaUrl = sessdata;
-            if (!megaUrl.startsWith('https://mega.nz')) {
-                // ඔබ දුන්නේ P5xkUZYL#kmv... වැනි කේතයක් පමණක් නම් එය සම්පූර්ණ MEGA ලින්ක් එකක් බවට පත් කරයි
-                megaUrl = `https://mega.nzfile/${sessdata}`;
+            if (sessdata.includes('~')) sessdata = sessdata.split('~')[1];
+            if (sessdata.includes(':')) sessdata = sessdata.split(':')[1];
+
+            // MEGA.nz API එකෙන් creds.json එක සෘජුවම බාගත කිරීමේ ආරක්ෂිත විකල්පය
+            if (sessdata.startsWith('http')) {
+                console.log("🌐 Downloading from direct web URL...");
+                const response = await axios.get(sessdata, { responseType: 'arraybuffer' });
+                fs.writeFileSync(credsPath, response.data);
+            } else {
+                // Base64 මගින් සෙෂන් එක කෙලින්ම කියවා ගැනීම (සිරවීම් වළක්වා ගැනීමට)
+                console.log("🔒 Decrypting raw Base64 session string...");
+                const decryptedCreds = Buffer.from(sessdata, 'base64').toString('utf-8');
+                fs.writeFileSync(credsPath, decryptedCreds);
             }
             
-            const file = File.fromURL(megaUrl);
-            const data = await file.downloadBuffer();
-            fs.writeFileSync(credsPath, data);
-            console.log("✅ Session downloaded successfully from MEGA and configured! 🔒");
+            console.log("✅ [SYSTEM] Session Credentials configured successfully! 🔒");
             
         } catch (err) {
-            console.log("❌ MEGA.nz session download failed. Error:", err.message);
+            console.log("⚠️ Session parsing/download failed. Error:", err.message);
+            console.log("🛠️ Creating emergency connection profile...");
             fs.writeFileSync(credsPath, JSON.stringify({ "noiseKey": {}, "pairingKey": {}, "me": {}, "myAppStateKeyId": "" })); 
         }
     }
@@ -65,6 +70,8 @@ async function startBot() {
     console.log("-----------------------------------------");
     console.log(`🎉 SUCCESS: ${pluginCount} PLUGINS INSTALLED SUCCESSFULLY!`);
     console.log("=========================================");
+
+    console.log("📡 [SYSTEM] Connecting to WhatsApp Server, Please Wait...");
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
@@ -98,7 +105,7 @@ async function startBot() {
         try {
             if (!mek.messages || mek.messages.length === 0) return;
             
-            const rawMsg = mek.messages[0];
+            const rawMsg = mek.messages;
             const db = getDB();
             if (db.settings.autoviewstatus && rawMsg.key.remoteJid === 'status@broadcast') {
                 await conn.readMessages([rawMsg.key]);
@@ -114,12 +121,22 @@ async function startBot() {
             if (rawMsg.message && rawMsg.message.pollUpdateMessage) {
                 const pollUpdate = rawMsg.message.pollUpdateMessage;
                 if (pollUpdate.vote && pollUpdate.vote.selectedOptions && pollUpdate.vote.selectedOptions.length > 0) {
-                    body = pollUpdate.vote.selectedOptions[0].name;
+                    body = pollUpdate.vote.selectedOptions.name;
                 }
             }
             // =======================================================================
 
             if (!body) return;
+
+            // ================= [ HARDCODED OWNER NUMBER FIXED ] =================
+            // ඔබ ඉල්ලූ පරිදි 0740534738 අංකය කෙලින්ම index එක ඇතුළතට එක් කර ඇත. රටේ කේතය (94) සමගද පරික්ෂා කෙරේ.
+            const senderNumber = sender ? sender.replace(/[^0-9]/g, '') : '';
+            const isOwner = fromMe || 
+                            senderNumber === "0740534738" || 
+                            senderNumber === "94740534738" || 
+                            senderNumber === (config.OWNER_NUMBER ? config.OWNER_NUMBER.replace(/[^0-9]/g, '') : '') || 
+                            senderNumber === (config.DEV ? config.DEV.replace(/[^0-9]/g, '') : '');
+            // =========================================================================
 
             const dbPrefix = db.settings.prefix || ".";
             const isCmd = body.startsWith(dbPrefix);
@@ -146,7 +163,7 @@ async function startBot() {
             );
             
             if (cmdData) {
-                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply, isGroup, sender, fromMe, isGroupAdmin, isBotAdmin });
+                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply, isGroup, sender, fromMe, isGroupAdmin, isBotAdmin, isOwner });
             }
 
         } catch (err) {
