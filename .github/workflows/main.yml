@@ -1,11 +1,9 @@
-name: QUEEN ELISA-MD CI/CD 
+name: QUEEN ELISA-MD BOT 
 
 on:
 push:
 branches: [ main ]
-pull_request:
-branches: [ main ]
-workflow_dispatch: 
+workflow_dispatch: # GitHub එකෙන් කෙලින්ම Run බටන් එක ඔබලා රන් කිරීමට 
 
 jobs:
 build:
@@ -13,19 +11,36 @@ runs-on: ubuntu-latest
 
 steps:
 
-* name: Checkout Repository
+* name: Checkout Code
 uses: actions/checkout@v4
 * name: Setup Node.js 24
 uses: actions/setup-node@v4
 with:
-node-version: '24.x'
-* name: Install System Dependencies (ffmpeg & graphics)
+node-version: '24'
+* name: Install System Packages
 run: |
 sudo apt-get update
-sudo apt-get install -y ffmpeg imagemagick
-* name: Install Project Dependencies
+sudo apt-get install -y ffmpeg imagemagick chromium-browser
+* name: Install Bot Dependencies
 run: npm install
-* name: Run WhatsApp Bot Engine
-env:
-SESSION_ID: ${{ secrets.SESSION_ID }}
+* name: Create Auth Session Directory
+run: mkdir -p auth_info_baileys
+* name: Decode and Inject WhatsApp Session
+run: |
+
+### config.js එක ඇතුලේ තියෙන සෙෂන් එක කියවා LUXALGO= කෑල්ල අයින් කිරීම
+
+RAW_SESSION="P5xkUZYL#kmvWI2vvod2HmcT_qDBzNHq2GD44jeHfakgGubLJPwU" 
+
+# Base64 string එක creds.json ෆයිල් එකක් බවට පරිවර්තනය කර ආරක්ෂිතව තැන්පත් කිරීම
+
+echo "
+
+RAWSESSION"|base64−−decode>authinfobaileys/creds.json||echo"cap R cap A cap W sub cap S cap E cap S cap S cap I cap O cap N " the absolute value of b a s e 64 minus negative d e c o d e is greater than a u t h sub i n f o sub b a i l e y s / c r e d s point j s o n end-absolute-value  vertical line  e c h o "
+𝑅𝐴𝑊𝑆𝐸𝑆𝑆𝐼𝑂𝑁"|𝑏𝑎𝑠𝑒64−−𝑑𝑒𝑐𝑜𝑑𝑒>𝑎𝑢𝑡ℎ𝑖𝑛𝑓𝑜𝑏𝑎𝑖𝑙𝑒𝑦𝑠/𝑐𝑟𝑒𝑑𝑠.𝑗𝑠𝑜𝑛||𝑒𝑐ℎ𝑜"
+RAW_SESSION" > auth_info_baileys/creds.json
+
+continue-on-error: true 
+
+* name: Start QUEEN ELISA-MD Engine
 run: node index.js
