@@ -8,63 +8,114 @@ const { parseMessage } = require('./lib/msgparser');
 const { getDB } = require('./lib/database'); 
 
 async function startBot() {
+    // 1. Session and Credentials management
+    if (!fs.existsSync('./auth_info_baileys')) {
+        fs.mkdirSync('./auth_info_baileys');
+    }
+
+    const credsPath = './auth_info_baileys/creds.json';
+    if (!fs.existsSync(credsPath)) {
+        try {
+            const base64Data = config.SESSION_ID.split('=');
+            if (base64Data && base64Data[1]) {
+                const decryptedCreds = Buffer.from(base64Data[1], 'base64').toString('utf-8');
+                fs.writeFileSync(credsPath, decryptedCreds);
+            }
+        } catch (e) {
+            console.log("Session decryption failed, creating basic session file.");
+            fs.writeFileSync(credsPath, JSON.stringify({ "noiseKey": {}, "pairingKey": {}, "me": {}, "myAppStateKeyId": "" })); 
+        }
+    }
+
+    // 2. Plugins Auto-Loader System
+    console.log("Loading plugins...");
+    const pluginsPath = path.join(__dirname, 'plugins');
+    if (fs.existsSync(pluginsPath)) {
+        fs.readdirSync(pluginsPath).forEach(file => {
+            if (file.endsWith('.js')) {
+                require(`./plugins/${file}`);
+                console.log(`Plugin Loaded: ${file} ✅`);
+            }
+        });
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
     const conn = makeWASocket({
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: false, // QR අක්‍රීයයි
+        printQRInTerminal: false,
         auth: state,
-        browser: [ "Ubuntu", "Chrome", "20.0.04" ] // බ්‍රවුසර් එකක් ලෙස පෙන්වීම
+        browser: [ "Ubuntu", "Chrome", "20.0.04" ]
     });
-
-    // --- PAIRING CODE GENERATOR ---
-    // බොට් තවම ලොග් වෙලා නැත්නම්, පහත නම්බර් එකට ඔටෝ කෝඩ් එකක් රික්වෙස්ට් කරයි
-    if (!conn.authState.creds.registered) {
-        // 💡 කරුණාකර '94771234567' වෙනුවට ඔයාගේ බොට් දාන WhatsApp නම්බර් එක ඇතුලත් කරන්න (+ ලකුණ නැතිව)
-        const myBotNumber = "94740534738"; 
-        
-        setTimeout(async () => {
-            let code = await conn.requestPairingCode(myBotNumber);
-            code = code?.match(/.{1,4}/g)?.join("-") || code;
-            console.log(`\n\n🔑 QUEEN ELISA LOGIN PAIRING CODE: ${code}\n\n`);
-        }, 5000);
-    }
 
     conn.ev.on('creds.update', saveCreds);
 
+    // 3. Monitor connection status
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Connection closed. Reconnecting...', shouldReconnect);
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
             console.log(`✅ ${config.BOT_NAME} Connected Successfully!`);
         }
     });
 
+    // 4. Main Message Incoming Handler
     conn.ev.on('messages.upsert', async (mek) => {
         try {
             if (!mek.messages || mek.messages.length === 0) return;
+            
+            // Auto-Read Status Feature
+            const rawMsg = mek.messages[0];
+            const db = getDB();
+            if (db.settings.autoviewstatus && rawMsg.key.remoteJid === 'status@broadcast') {
+                await conn.readMessages([rawMsg.key]);
+                console.log(`[STATUS WATCHER] Automatically viewed status from: ${rawMsg.pushName || 'User'}`);
+                return;
+            }
+
+            // Parse incoming WhatsApp raw message payloads via lib/msgparser
             const parsed = await parseMessage(conn, mek);
             if (!parsed) return;
 
-            const { msg, jid, body } = parsed;
-            const db = getDB();
+            const { msg, jid, isGroup, sender, fromMe, pushname, body, isGroupAdmin, isBotAdmin } = parsed;
+            if (!body) return;
+
+            // Command identification structure
             const dbPrefix = db.settings.prefix || ".";
             const isCmd = body.startsWith(dbPrefix);
             
-            const command = isCmd ? body.slice(dbPrefix.length).trim().split(' ')[0].toLowerCase() : body.trim().toLowerCase();
+            // Fixed Lowercase processing bug
+            let command = "";
+            if (isCmd) {
+                command = body.slice(dbPrefix.length).trim().split(' ')[0].toLowerCase();
+            } else {
+                command = body.trim(); // Button IDs can be case-sensitive, reading directly
+            }
+                
             const args = body.trim().split(/ +/).slice(1);
             const q = args.join(' ');
-            const pushname = msg.pushName || 'User';
-            const reply = async (text) => { await conn.sendMessage(jid, { text: text }, { quoted: msg }); };
 
-            const cmdData = commands.find((c) => c.pattern === command || (c.alias && c.alias.includes(command)));
+            const reply = async (text) => {
+                await conn.sendMessage(jid, { text: text }, { quoted: msg });
+            };
+
+            // Locate and fire the command or matching button ID from registry
+            // Added check to match both lowercase and exact button ID pattern
+            const cmdData = commands.find((c) => 
+                c.pattern.toLowerCase() === command.toLowerCase() || 
+                c.pattern === command ||
+                (c.alias && c.alias.map(v => v.toLowerCase()).includes(command.toLowerCase()))
+            );
+            
             if (cmdData) {
-                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply });
+                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply, isGroup, sender, fromMe, isGroupAdmin, isBotAdmin });
             }
+
         } catch (err) {
-            console.log(err);
+            console.log("Error handling standard loop message:", err);
         }
     });
 }
