@@ -1,0 +1,31 @@
+name: QUEEN ELISA-MD CI/CD 
+
+on:
+push:
+branches: [ main ]
+pull_request:
+branches: [ main ]
+workflow_dispatch: 
+
+jobs:
+build:
+runs-on: ubuntu-latest 
+
+steps:
+
+* name: Checkout Repository
+uses: actions/checkout@v4
+* name: Setup Node.js 24
+uses: actions/setup-node@v4
+with:
+node-version: '24.x'
+* name: Install System Dependencies (ffmpeg & graphics)
+run: |
+sudo apt-get update
+sudo apt-get install -y ffmpeg imagemagick
+* name: Install Project Dependencies
+run: npm install
+* name: Run WhatsApp Bot Engine
+env:
+SESSION_ID: ${{ secrets.SESSION_ID }}
+run: node index.js
