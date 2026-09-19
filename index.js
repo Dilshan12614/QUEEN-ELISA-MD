@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const { commands } = require('./command');
+const { parseMessage } = require('./lib/msgparser'); // Connect the message parser
+const { getDB, saveDB } = require('./lib/database'); // Connect the database
 
 async function startBot() {
     // 1. Session and Credentials management
@@ -15,16 +17,17 @@ async function startBot() {
     if (!fs.existsSync(credsPath)) {
         try {
             const base64Data = config.SESSION_ID.split('=');
-            if (base64Data) {
-                const decryptedCreds = Buffer.from(base64Data, 'base64').toString('utf-8');
+            if (base64Data && base64Data[1]) {
+                const decryptedCreds = Buffer.from(base64Data[1], 'base64').toString('utf-8');
                 fs.writeFileSync(credsPath, decryptedCreds);
             }
         } catch (e) {
+            console.log("Session decryption failed, creating basic session file.");
             fs.writeFileSync(credsPath, JSON.stringify({ "noiseKey": {}, "pairingKey": {}, "me": {}, "myAppStateKeyId": "" })); 
         }
     }
 
-    // 2. PLUGINS AUTO-LOADER SYSTEM
+    // 2. Plugins Auto-Loader System
     console.log("Loading plugins...");
     const pluginsPath = path.join(__dirname, 'plugins');
     if (fs.existsSync(pluginsPath)) {
@@ -47,6 +50,7 @@ async function startBot() {
 
     conn.ev.on('creds.update', saveCreds);
 
+    // 3. Monitor connection status
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
@@ -58,46 +62,75 @@ async function startBot() {
         }
     });
 
+    // 4. WORKABLE WORK: ANTI-DELETE SYSTEM (Captures Deleted Messages)
+    conn.ev.on('messages.update', async (updates) => {
+        try {
+            const db = getDB();
+            if (!db.settings.antidelete) return; // Skip if disabled
+
+            for (const update of updates) {
+                if (update.update.message === null) {
+                    const deletedMsgJid = update.key.remoteJid;
+                    const deletedMsgSender = update.key.participant || deletedMsgJid;
+                    
+                    console.log(`[ANTI-DELETE] Detected inside: ${deletedMsgJid}`);
+                    
+                    await conn.sendMessage(deletedMsgJid, { 
+                        text: `⚠️ *[QUEEN ELISA ANTI-DELETE]*\n\n@${deletedMsgSender.split('@')[0]} just deleted a message!`,
+                        mentions: [deletedMsgSender]
+                    }, { quoted: update });
+                }
+            }
+        } catch (err) {
+            console.log("Error in anti-delete engine:", err);
+        }
+    });
+
+    // 5. Main Message Incoming Handler
     conn.ev.on('messages.upsert', async (mek) => {
         try {
             if (!mek.messages || mek.messages.length === 0) return;
-            const msg = mek.messages;
-            if (!msg.message) return;
-
-            const jid = msg.key.remoteJid;
-            const messageType = Object.keys(msg.message);
-
-            // Read regular messages or button interactions
-            let body = "";
-            if (messageType === 'conversation') {
-                body = msg.message.conversation;
-            } else if (messageType === 'extendedTextMessage') {
-                body = msg.message.extendedTextMessage.text;
-            } else if (messageType === 'interactiveResponseMessage') {
-                const params = JSON.parse(msg.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson);
-                body = params.id || "";
+            
+            // Auto-Read Status Feature
+            const rawMsg = mek.messages[0];
+            const db = getDB();
+            if (db.settings.autoviewstatus && rawMsg.key.remoteJid === 'status@broadcast') {
+                await conn.readMessages([rawMsg.key]);
+                console.log(`[STATUS WATCHER] Automatically viewed status from: ${rawMsg.pushName || 'User'}`);
+                return;
             }
 
-            // Command parsing logic
-            const prefix = ".";
-            const isCmd = body.startsWith(prefix);
-            const command = isCmd ? body.slice(prefix.length).trim().split(' ')[0].toLowerCase() : body.trim().toLowerCase();
+            // Parse incoming WhatsApp raw message payloads via lib/msgparser
+            const parsed = await parseMessage(conn, mek);
+            if (!parsed) return;
+
+            const { msg, jid, isGroup, sender, fromMe, pushname, body, isGroupAdmin, isBotAdmin } = parsed;
+
+            // Command identification structure
+            const dbPrefix = db.settings.prefix || ".";
+            const isCmd = body.startsWith(dbPrefix);
+            
+            // BUTTON ROUTER LOGIC: 
+            // If it is a button response (doesn't have a prefix), we read it directly as the command name.
+            const command = isCmd 
+                ? body.slice(dbPrefix.length).trim().split(' ')[0].toLowerCase() 
+                : body.trim().toLowerCase();
+                
             const args = body.trim().split(/ +/).slice(1);
             const q = args.join(' ');
-            const pushname = msg.pushName || 'User';
 
             const reply = async (text) => {
                 await conn.sendMessage(jid, { text: text }, { quoted: msg });
             };
 
-            // Find and execute plugin command or button ID match
+            // Locate and fire the command or matching button ID from registry
             const cmdData = commands.find((c) => c.pattern === command || (c.alias && c.alias.includes(command)));
             if (cmdData) {
-                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply });
+                await cmdData.function(conn, mek, msg, { jid, body, isCmd, command, args, q, pushname, reply, isGroup, sender, fromMe, isGroupAdmin, isBotAdmin });
             }
 
         } catch (err) {
-            console.log("Error inside message execution loop:", err);
+            console.log("Error handling standard loop message:", err);
         }
     });
 }
