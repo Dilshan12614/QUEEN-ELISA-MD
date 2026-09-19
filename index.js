@@ -27,17 +27,26 @@ async function startBot() {
         }
     }
 
-    // 2. Plugins Auto-Loader System
-    console.log("Loading plugins...");
+    // 2. Plugins Auto-Loader System with Total Count Logger
+    console.log("=========================================");
+    console.log("⚙️  STARTING QUEEN ELISA-MD PLUGINS ENGINE...");
+    console.log("=========================================");
+    
     const pluginsPath = path.join(__dirname, 'plugins');
+    let pluginCount = 0;
+    
     if (fs.existsSync(pluginsPath)) {
         fs.readdirSync(pluginsPath).forEach(file => {
             if (file.endsWith('.js')) {
                 require(`./plugins/${file}`);
-                console.log(`Plugin Loaded: ${file} ✅`);
+                console.log(`🔹 Plugin Loaded: ${file} ✅`);
+                pluginCount++;
             }
         });
     }
+    console.log("-----------------------------------------");
+    console.log(`🎉 SUCCESS: ${pluginCount} PLUGINS INSTALLED SUCCESSFULLY!`);
+    console.log("=========================================");
 
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
 
@@ -50,15 +59,19 @@ async function startBot() {
 
     conn.ev.on('creds.update', saveCreds);
 
-    // 3. Monitor connection status
+    // 3. Monitor connection status with beautiful logs
     conn.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed. Reconnecting...', shouldReconnect);
+            console.log('⚠️ Connection closed. Reconnecting to WhatsApp...', shouldReconnect);
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log(`✅ ${config.BOT_NAME} Connected Successfully!`);
+            console.log("=========================================");
+            console.log(`✅ SUCCESS: CONNECTED TO WHATSAPP SERVER!`);
+            console.log(`🤖 BOT NAME : ${config.BOT_NAME}`);
+            console.log(`📡 STATUS   : ONLINE & READY TO WORK`);
+            console.log("=========================================");
         }
     });
 
@@ -72,7 +85,6 @@ async function startBot() {
             const db = getDB();
             if (db.settings.autoviewstatus && rawMsg.key.remoteJid === 'status@broadcast') {
                 await conn.readMessages([rawMsg.key]);
-                console.log(`[STATUS WATCHER] Automatically viewed status from: ${rawMsg.pushName || 'User'}`);
                 return;
             }
 
@@ -87,12 +99,12 @@ async function startBot() {
             const dbPrefix = db.settings.prefix || ".";
             const isCmd = body.startsWith(dbPrefix);
             
-            // Fixed Lowercase processing bug
             let command = "";
             if (isCmd) {
-                command = body.slice(dbPrefix.length).trim().split(' ')[0].toLowerCase();
+                const splitText = body.slice(dbPrefix.length).trim().split(' ');
+                command = splitText[0].toLowerCase();
             } else {
-                command = body.trim(); // Button IDs can be case-sensitive, reading directly
+                command = body.trim(); 
             }
                 
             const args = body.trim().split(/ +/).slice(1);
@@ -103,7 +115,6 @@ async function startBot() {
             };
 
             // Locate and fire the command or matching button ID from registry
-            // Added check to match both lowercase and exact button ID pattern
             const cmdData = commands.find((c) => 
                 c.pattern.toLowerCase() === command.toLowerCase() || 
                 c.pattern === command ||
