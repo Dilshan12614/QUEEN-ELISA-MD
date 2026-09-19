@@ -2,27 +2,42 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, proto } 
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const { File } = require('megajs'); // MEGA ෆයිල් ඩවුන්ලෝඩ් කිරීමට අවශ්‍ය පැකේජය
 const config = require('./config');
 const { commands } = require('./command');
 const { parseMessage } = require('./lib/msgparser'); 
 const { getDB } = require('./lib/database'); 
 
 async function startBot() {
-    // 1. Session and Credentials management
+    // 1. Session and Credentials management (MEGA.nz Downloader Fix)
     if (!fs.existsSync('./auth_info_baileys')) {
         fs.mkdirSync('./auth_info_baileys');
     }
 
     const credsPath = './auth_info_baileys/creds.json';
+    
     if (!fs.existsSync(credsPath)) {
+        if (!config.SESSION_ID) {
+            return console.log('❌ Please add your session to SESSION_ID env or config file!!');
+        }
+
         try {
-            const base64Data = config.SESSION_ID.split('=');
-            if (base64Data && base64Data[1]) {
-                const decryptedCreds = Buffer.from(base64Data[1], 'base64').toString('utf-8');
-                fs.writeFileSync(credsPath, decryptedCreds);
-            }
-        } catch (e) {
-            console.log("Session decryption failed, creating basic session file.");
+            console.log("📥 Downloading session credentials from MEGA.nz...");
+            
+            // සෙෂන් අයිඩී එකේ මුලට LUXALGO= හෝ වෙනත් බොට් නමක් ආවොත් එය ඉවත් කර නියම සෙෂන් කේතය පමණක් ගනී
+            const sessdata = config.SESSION_ID.replace("LUXALGO=", "").replace(/^[A-Za-z0-9_]+-MD~/, "");
+            
+            // MEGA.nz ලින්ක් එක සාදා ගැනීම
+            const megaUrl = `https://mega.nz/file/${sessdata}`;
+            const file = File.fromURL(megaUrl);
+            
+            // ෆයිල් එක බාගත කර creds.json ලෙස සුරැකීම
+            const data = await file.downloadBuffer();
+            fs.writeFileSync(credsPath, data);
+            console.log("✅ Session downloaded successfully from MEGA and configured! 🔒");
+            
+        } catch (err) {
+            console.log("❌ MEGA.nz session download failed. Trying backup creation. Error:", err.message);
             fs.writeFileSync(credsPath, JSON.stringify({ "noiseKey": {}, "pairingKey": {}, "me": {}, "myAppStateKeyId": "" })); 
         }
     }
@@ -94,16 +109,14 @@ async function startBot() {
 
             let { msg, jid, isGroup, sender, fromMe, pushname, body, isGroupAdmin, isBotAdmin } = parsed;
 
-            // ================= [ POLL BUTTON READER SYSTEM ] =================
-            // බටන් එකක් ක්ලික් කල විට එය හඳුනාගෙන command එකට පරිවර්තනය කරන කොටස
+            // ================= [ POLL BUTTON READER SYSTEM FIXED ] =================
             if (rawMsg.message && rawMsg.message.pollUpdateMessage) {
                 const pollUpdate = rawMsg.message.pollUpdateMessage;
-                // පරිශීලකයා ඡන්දය ප්‍රකාශ කල (ක්ලික් කල) බටන් එකේ නම ලබා ගැනීම
                 if (pollUpdate.vote && pollUpdate.vote.selectedOptions && pollUpdate.vote.selectedOptions.length > 0) {
                     body = pollUpdate.vote.selectedOptions[0].name;
                 }
             }
-            // =================================================================
+            // =======================================================================
 
             if (!body) return;
 
